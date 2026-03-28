@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdfmd"
-version = "1.5.1"
-description = "Fast, local, privacy-first PDF to Markdown converter with OCR, table detection, and math support"
+version = "1.6.0"
+description = "Fast, local, privacy-first PDF to Markdown converter with OCR, multi-language support, table detection, and math preservation"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
@@ -36,6 +36,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Text Processing :: Markup :: Markdown",
     "Topic :: Multimedia :: Graphics :: Capture :: Scanners",
     "Topic :: Software Development :: Libraries :: Python Modules",
