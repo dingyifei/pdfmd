@@ -22,13 +22,16 @@ Notes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional, List, Dict
+from typing import Callable, Optional, List, Dict, Tuple
+import io
 import os
 
 try:
     import fitz  # PyMuPDF
 except Exception:
     fitz = None
+
+from PIL import Image
 
 from .models import Options
 from .extract import extract_pages, _open_pdf_with_password
@@ -68,6 +71,60 @@ def _append_image_refs(md: str, page_to_relpaths: Dict[int, List[str]]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _normalize_pixmap(pix) -> "fitz.Pixmap":
+    """Convert a PyMuPDF Pixmap to RGB with no alpha."""
+    if pix.colorspace and pix.colorspace.n > 3:
+        pix = fitz.Pixmap(fitz.csRGB, pix)
+    if pix.alpha:
+        pix = fitz.Pixmap(pix, 0)
+    return pix
+
+
+def _pixmap_to_pil(pix) -> Image.Image:
+    """Convert a PyMuPDF Pixmap to a PIL Image."""
+    return Image.open(io.BytesIO(pix.tobytes("png")))
+
+
+def _group_tile_strips(
+    entries: List[Tuple["fitz.Pixmap", "fitz.Rect"]],
+    tol: float = 2.0,
+) -> List[List[int]]:
+    """Group images that form vertical tile strips.
+
+    Images are considered part of the same strip when they share the same
+    x-span (within *tol* points) and their y-coordinates are consecutive
+    (y0 of the next image ≈ y1 of the previous, within *tol*).
+
+    Returns list of groups, each group being a list of indices into *entries*.
+    """
+    indexed = sorted(range(len(entries)), key=lambda i: (round(entries[i][1].x0), round(entries[i][1].y0)))
+    groups: List[List[int]] = []
+    for i in indexed:
+        _, rect = entries[i]
+        if groups:
+            last_idx = groups[-1][-1]
+            _, prev_rect = entries[last_idx]
+            same_x = abs(rect.x0 - prev_rect.x0) < tol and abs(rect.x1 - prev_rect.x1) < tol
+            consecutive_y = abs(rect.y0 - prev_rect.y1) < tol
+            if same_x and consecutive_y:
+                groups[-1].append(i)
+                continue
+        groups.append([i])
+    return groups
+
+
+def _stitch_vertical(pil_images: List[Image.Image]) -> Image.Image:
+    """Stitch PIL Images vertically into a single image."""
+    total_w = max(im.width for im in pil_images)
+    total_h = sum(im.height for im in pil_images)
+    merged = Image.new("RGB", (total_w, total_h))
+    y = 0
+    for im in pil_images:
+        merged.paste(im, (0, y))
+        y += im.height
+    return merged
+
+
 def _export_images(
     pdf_path: str,
     output_md: str,
@@ -79,29 +136,18 @@ def _export_images(
 
     Returns a mapping: page_index → [relpath, ...].
 
-    For password-protected PDFs, the password is used only to open the
-    document in memory. It is never logged or persisted.
-    
-    Args:
-        pdf_path: Path to input PDF
-        output_md: Path to output Markdown file
-        options: Conversion options
-        log_cb: Optional logging callback
-        pdf_password: Optional PDF password (ephemeral, in-memory only)
-        
-    Returns:
-        Dictionary mapping page indices to lists of relative image paths
+    Adjacent tile strips (images sharing the same x-span with consecutive
+    y-coordinates) are automatically detected and stitched into a single image.
     """
     if not options.export_images:
         return {}
-    
+
     if fitz is None:
         if log_cb:
             log_cb("[pipeline] PyMuPDF is not available; cannot export images.")
         return {}
 
     try:
-        # Reuse the central password-aware open helper so behavior matches extract.py
         doc = _open_pdf_with_password(pdf_path, pdf_password)
     except Exception as e:
         if log_cb:
@@ -120,48 +166,56 @@ def _export_images(
         for pno in range(limit):
             page = doc.load_page(pno)
             images = page.get_images(full=True)
-            rels: List[str] = []
-            
-            for idx, img in enumerate(images, start=1):
+
+            # Collect pixmaps and their placement rects
+            entries: List[Tuple[fitz.Pixmap, fitz.Rect]] = []
+            for img in images:
                 xref = img[0]
                 try:
-                    pix = fitz.Pixmap(doc, xref)
+                    pix = _normalize_pixmap(fitz.Pixmap(doc, xref))
                 except Exception as exc:
                     if log_cb:
                         log_cb(f"[pipeline] Skipping image xref={xref} on page {pno + 1}: {exc}")
                     continue
-                
-                # Convert any non-RGB/Gray colorspace (CMYK, ICC, etc.) to RGB.
-                # PNG only supports RGB(A) and Gray(A), so anything else must
-                # be converted before saving.
-                if pix.colorspace and pix.colorspace.n > 3:
-                    pix = fitz.Pixmap(fitz.csRGB, pix)
-                
-                # Drop alpha channel if present — avoids issues with some
-                # viewers and keeps file sizes smaller.
-                if pix.alpha:
-                    pix = fitz.Pixmap(pix, 0)  # 0 = drop alpha
-                
-                fname = assets_dir / f"img_{pno + 1:03d}_{idx:02d}.png"
+                rects = page.get_image_rects(xref)
+                rect = rects[0] if rects else fitz.Rect(0, len(entries) * 1000, 1, len(entries) * 1000 + 1)
+                entries.append((pix, rect))
+
+            if not entries:
+                continue
+
+            groups = _group_tile_strips(entries)
+            rels: List[str] = []
+            img_idx = 0
+
+            for group in groups:
+                img_idx += 1
+                fname = assets_dir / f"img_{pno + 1:03d}_{img_idx:02d}.png"
                 try:
-                    pix.save(str(fname))
+                    if len(group) == 1:
+                        entries[group[0]][0].save(str(fname))
+                    else:
+                        pil_images = [_pixmap_to_pil(entries[i][0]) for i in group]
+                        merged = _stitch_vertical(pil_images)
+                        merged.save(str(fname))
+                        if log_cb:
+                            log_cb(f"[pipeline] Stitched {len(group)} tiles → {fname.name}")
                 except Exception as exc:
                     if log_cb:
-                        log_cb(f"[pipeline] Could not save image p{pno + 1}-{idx}: {exc}")
+                        log_cb(f"[pipeline] Could not save image p{pno + 1}-{img_idx}: {exc}")
                     continue
-                
-                # Markdown wants forward slashes for portability
+
                 rel = assets_dir.name + "/" + fname.name
                 rels.append(rel)
-            
+
             if rels:
                 mapping[pno] = rels
-        
+
         if log_cb and mapping:
             log_cb(f"[pipeline] Exported images to folder: {assets_dir}")
-        
+
         return mapping
-    
+
     finally:
         doc.close()
 
