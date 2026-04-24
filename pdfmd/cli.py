@@ -161,8 +161,15 @@ Security notes:
 
     parser.add_argument(
         "--export-images",
-        action="store_true",
-        help="Export images to an _assets/ folder and append Markdown references.",
+        nargs="?",
+        const="white",
+        default=None,
+        choices=["white", "black", "transparent"],
+        help=(
+            "Export images to an _assets/ folder and append Markdown references.\n"
+            "Optional value sets the background for transparent pixels:\n"
+            "  white (default) | black | transparent (keep alpha)."
+        ),
     )
 
     parser.add_argument(
@@ -245,7 +252,7 @@ def _make_options(args: argparse.Namespace) -> Options:
 
     # Rendering / output
     opts.page_break_mode = args.page_breaks or "off"
-    opts.export_images = bool(args.export_images)
+    opts.export_images = args.export_images or "off"
 
     # Transform heuristics remain at their defaults; they can be exposed later.
     return opts

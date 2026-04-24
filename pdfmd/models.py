@@ -172,7 +172,7 @@ class Options:
 
     # Rendering / output
     page_break_mode: str = "off"  # "off", "visible", "hidden"
-    export_images: bool = False
+    export_images: str = "off"  # "off", "white", "black", "transparent"
 
 
 # ------------------------------ Utilities ------------------------------

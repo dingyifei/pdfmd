@@ -1024,7 +1024,7 @@ class PdfMdApp(tk.Tk):
             orphan_max_len=int(self.orphan_len_var.get()),
             remove_headers_footers=self.rm_edges_var.get(),
             page_break_mode="visible" if self.page_breaks_var.get() else "off",
-            export_images=self.export_images_var.get(),
+            export_images="white" if self.export_images_var.get() else "off",
         )
 
         # Run pipeline on a background thread; pass password as ephemeral arg

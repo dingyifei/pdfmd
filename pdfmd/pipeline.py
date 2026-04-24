@@ -71,12 +71,27 @@ def _append_image_refs(md: str, page_to_relpaths: Dict[int, List[str]]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _normalize_pixmap(pix) -> "fitz.Pixmap":
-    """Convert a PyMuPDF Pixmap to RGB with no alpha."""
+def _normalize_pixmap(pix, bg: str = "white") -> "fitz.Pixmap":
+    """Convert a PyMuPDF Pixmap to RGB, handling alpha per *bg*.
+
+    bg controls how transparent pixels are handled:
+      "white"       – composite onto white (default, best for documents)
+      "black"       – composite onto black
+      "transparent" – keep alpha channel intact
+    """
     if pix.colorspace and pix.colorspace.n > 3:
         pix = fitz.Pixmap(fitz.csRGB, pix)
     if pix.alpha:
-        pix = fitz.Pixmap(pix, 0)
+        if bg == "transparent":
+            pass  # keep alpha
+        elif bg == "black":
+            pix = fitz.Pixmap(pix, 0)
+        else:  # "white"
+            pil_img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGBA")
+            white_bg = Image.new("RGB", pil_img.size, (255, 255, 255))
+            white_bg.paste(pil_img, mask=pil_img.split()[3])
+            samples = white_bg.tobytes()
+            pix = fitz.Pixmap(fitz.csRGB, pil_img.width, pil_img.height, samples, 0)
     return pix
 
 
@@ -177,7 +192,7 @@ def _export_images(
     Adjacent tile strips (images sharing the same x-span with consecutive
     y-coordinates) are automatically detected and stitched into a single image.
     """
-    if not options.export_images:
+    if options.export_images == "off":
         return {}
 
     if fitz is None:
@@ -210,7 +225,7 @@ def _export_images(
             for img in images:
                 xref = img[0]
                 try:
-                    pix = _normalize_pixmap(fitz.Pixmap(doc, xref))
+                    pix = _normalize_pixmap(fitz.Pixmap(doc, xref), bg=options.export_images)
                 except Exception as exc:
                     if log_cb:
                         log_cb(f"[pipeline] Skipping image xref={xref} on page {pno + 1}: {exc}")
@@ -364,7 +379,7 @@ def pdf_to_markdown(
         progress_cb(80, 100)
 
     # --- Stage 4: Optional image export ---
-    if options.export_images:
+    if options.export_images != "off":
         if log_cb:
             log_cb("[pipeline] Exporting images…")
         

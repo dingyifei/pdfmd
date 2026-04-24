@@ -734,8 +734,11 @@ pdfmd japanese_doc.pdf --ocr tesseract --lang jpn
 
 **🖼️ Documents with Images**
 ```bash
-# Extract images to _assets/ folder with references
+# Extract images to _assets/ folder with references (white background)
 pdfmd presentation.pdf --export-images
+
+# Keep transparent backgrounds in exported images
+pdfmd presentation.pdf --export-images transparent
 
 # OCR + images for scanned slides
 pdfmd slides.pdf --ocr auto --export-images
@@ -784,7 +787,8 @@ pdfmd document.pdf -v --no-color
 
 ```
 usage: pdfmd [-h] [-o OUTPUT] [--ocr {off,auto,tesseract,ocrmypdf}]
-             [--lang LANG] [--export-images] [--page-breaks [{visible,hidden}]]
+             [--lang LANG] [--export-images [{white,black,transparent}]]
+             [--page-breaks [{visible,hidden}]]
              [--preview-only]
              [--no-progress] [-q] [-v] [--stats] [--no-color] [--version]
              INPUT_PDF [INPUT_PDF ...]
@@ -817,8 +821,13 @@ options:
                         Combine with '+' for multiple: 'eng+fra'.
                         Only used when --ocr is not 'off'.
   
-  --export-images       Export images to _assets/ folder next to output file,
+  --export-images [MODE]
+                        Export images to _assets/ folder next to output file,
                         with Markdown image references appended to document.
+                        MODE sets the background for transparent pixels:
+                          white       — composite onto white (default)
+                          black       — composite onto black
+                          transparent — keep alpha channel intact
   
   --page-breaks [MODE]  Insert page markers between pages (default: visible).
                         visible — '---' horizontal rule between pages.
@@ -906,13 +915,13 @@ pdfmd *.pdf -o converted/
 **Image Export:**
 ```bash
 pdfmd slides.pdf --export-images
-# Creates:
-#   slides.md
-#   slides_assets/
-#     ├── img_001_01.png
-#     ├── img_001_02.png
-#     └── ...
-# Images referenced at end of slides.md
+# Creates slides_assets/ with white background for transparent pixels (default)
+
+pdfmd slides.pdf --export-images transparent
+# Keeps alpha channel intact in exported PNGs
+
+pdfmd slides.pdf --export-images black
+# Uses black background for transparent pixels
 ```
 
 #### CLI Error Handling
